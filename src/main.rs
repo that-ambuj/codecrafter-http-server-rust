@@ -6,28 +6,24 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:4221").await?;
+async fn main() {
+    let listener = TcpListener::bind("127.0.0.1:4221").await.unwrap();
 
-    loop {
-        if let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                handle_stream(stream).await.unwrap();
-            });
-        }
+    while let Ok((stream, _)) = listener.accept().await {
+        tokio::spawn(async move {
+            handle_stream(stream).await;
+        });
     }
 }
 
 const OK_RESP: &str = "HTTP/1.1 200 OK\r\n";
 const NOT_FOUND_RESP: &str = "HTTP/1.1 404 NOT FOUND\r\n";
 
-async fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
+async fn handle_stream(mut stream: TcpStream) {
     let reader = BufReader::new(&mut stream);
 
     let response = parse_request(reader).await;
-    response.write_tcp(&mut stream).await;
-
-    Ok(())
+    stream.write_all(response.build().as_bytes()).await.unwrap();
 }
 
 async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
@@ -39,9 +35,7 @@ async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
                 "/user-agent" => loop {
                     if let Ok(Some(line)) = lines.next_line().await {
                         if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
-                            break Response::new_ok().set_body(v);
-                        } else {
-                            continue;
+                            return Response::new_ok().set_body(v);
                         }
                     }
                 },
@@ -133,12 +127,12 @@ impl Response {
                 content_length,
                 body,
             } => format!(
-                "{OK_RESP}Content-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "{OK_RESP}Content-Type: {}\r\nContent-Length: {}\r\n\r\n{}",
                 content_type.to_string(),
                 content_length,
                 body
             ),
-            Response::NotFound => format!("{NOT_FOUND_RESP}\r\nConnection: close\r\n"),
+            Response::NotFound => format!("{NOT_FOUND_RESP}\r\n"),
         }
     }
 }
