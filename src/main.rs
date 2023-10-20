@@ -122,7 +122,7 @@ impl Response {
                 content_length,
                 body
             ),
-            Response::NotFound => format!("{NOT_FOUND_RESP}"),
+            Response::NotFound => format!("{NOT_FOUND_RESP}\r\n"),
         }
     }
 }
