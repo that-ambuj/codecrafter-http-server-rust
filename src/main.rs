@@ -2,57 +2,50 @@ use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{char, multispace0, multispace1};
 use nom::sequence::{delimited, pair, preceded, separated_pair};
 use nom::IResult;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 
-fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:4221").await?;
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => handle_stream(stream)?,
-            Err(e) => {
-                eprintln!("error: {}", e);
-            }
+    loop {
+        if let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                handle_stream(stream).await.unwrap();
+            });
         }
     }
-
-    Ok(())
 }
 
 const OK_RESP: &str = "HTTP/1.1 200 OK\r\n";
 const NOT_FOUND_RESP: &str = "HTTP/1.1 404 NOT FOUND\r\n";
 
-fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
+async fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
     let reader = BufReader::new(&mut stream);
 
-    let response = parse_request(reader);
-
-    response.write_tcp(&mut stream)?;
+    let response = parse_request(reader).await;
+    response.write_tcp(&mut stream).await;
 
     Ok(())
 }
 
-fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
-    let mut lines = input
-        .lines()
-        .filter_map(Result::ok)
-        .filter(|l| !l.is_empty());
+async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
+    let mut lines = input.lines();
 
-    let path_header = lines.next().unwrap();
+    let path_header = lines.next_line().await.unwrap().unwrap();
 
     if let Ok((_, path)) = parse_path(&path_header) {
         match path {
-            "/user-agent" => lines
-                .find_map(|line| {
+            "/user-agent" => loop {
+                if let Ok(Some(line)) = lines.next_line().await {
                     if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
-                        Some(v.to_string())
+                        break Response::new_ok().set_body(v);
                     } else {
-                        None
+                        continue;
                     }
-                })
-                .map(|agent| Response::new_ok().set_body(&agent))
-                .unwrap_or(Response::new_not_found()),
+                }
+            },
             "/" => Response::new_ok(),
             res if res.starts_with("/echo") => {
                 Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
@@ -66,10 +59,6 @@ fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
 
 fn remove_echo_prefix(input: &str) -> IResult<&str, &str> {
     preceded(tag("/echo/"), is_not(" "))(input)
-}
-
-fn parse_echo_header(input: &str) -> IResult<&str, &str> {
-    parse_path(input).and_then(|(_, res)| remove_echo_prefix(res))
 }
 
 fn parse_path(input: &str) -> IResult<&str, &str> {
@@ -120,8 +109,8 @@ impl Response {
         Response::NotFound
     }
 
-    fn write_tcp(&self, stream: &mut TcpStream) -> std::io::Result<()> {
-        stream.write_all(&self.build().into_bytes())
+    async fn write_tcp(&self, stream: &mut TcpStream) {
+        while stream.write(&self.build().into_bytes()).await.is_ok() {}
     }
 
     fn set_body(self, body: &str) -> Self {
@@ -156,18 +145,6 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parsing_param() {
-        assert_eq!(
-            parse_echo_header("GET /echo/hello HTTP/1.1"),
-            Ok(("", "hello"))
-        );
-        assert_eq!(
-            parse_echo_header("GET /echo/217/delta HTTP/1.1"),
-            Ok(("", "217/delta"))
-        );
-    }
 
     #[test]
     fn test_parse_path() {
