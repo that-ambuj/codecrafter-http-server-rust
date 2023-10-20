@@ -33,23 +33,24 @@ async fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
 async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
     let mut lines = input.lines();
 
-    let path_header = lines.next_line().await.unwrap().unwrap();
-
-    if let Ok((_, path)) = parse_path(&path_header) {
-        match path {
-            "/user-agent" => loop {
-                if let Ok(Some(line)) = lines.next_line().await {
-                    if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
-                        break Response::new_ok().set_body(v);
-                    } else {
-                        continue;
+    if let Ok(Some(path_header)) = lines.next_line().await {
+        match parse_path(&path_header) {
+            Ok((_, path)) => match path {
+                "/user-agent" => loop {
+                    if let Ok(Some(line)) = lines.next_line().await {
+                        if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
+                            break Response::new_ok().set_body(v);
+                        } else {
+                            continue;
+                        }
                     }
+                },
+                res if res.starts_with("/echo") => {
+                    Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
                 }
+                "/" => Response::new_ok(),
+                _ => Response::new_not_found(),
             },
-            res if res.starts_with("/echo") => {
-                Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
-            }
-            "/" => Response::new_ok(),
             _ => Response::new_not_found(),
         }
     } else {
