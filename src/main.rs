@@ -1,6 +1,6 @@
-use nom::character::complete::alphanumeric1;
+use nom::bytes::complete::{is_not, tag};
+use nom::sequence::delimited;
 use nom::IResult;
-use nom::{bytes::complete::tag, sequence::delimited};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -30,13 +30,13 @@ fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
     if let Some(first_line) = lines.next() {
         match first_line.as_deref() {
             Ok("GET / HTTP/1.1") => Response::new_ok().write_tcp(&mut stream)?,
-            Ok(other) => {
-                if let Ok((_, param)) = parse_echo_header(other) {
-                    Response::new_ok().set_body(param).write_tcp(&mut stream)?
-                } else {
+            Ok(other) => match parse_echo_header(other) {
+                Ok((_, param)) => Response::new_ok().set_body(param).write_tcp(&mut stream)?,
+                e => {
+                    eprintln!("{:?}", e);
                     Response::new_not_found().write_tcp(&mut stream)?
                 }
-            }
+            },
             _ => Response::new_not_found().write_tcp(&mut stream)?,
         }
     }
@@ -45,7 +45,7 @@ fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
 }
 
 fn parse_echo_header(input: &str) -> IResult<&str, &str> {
-    delimited(tag("GET /echo/"), alphanumeric1, tag(" HTTP/1.1"))(input)
+    delimited(tag("GET /echo/"), is_not(" "), tag(" HTTP/1.1"))(input)
 }
 
 #[derive(Default)]
@@ -69,16 +69,6 @@ pub enum Response {
         body: String,
     },
     NotFound,
-}
-
-impl Default for Response {
-    fn default() -> Self {
-        Response::Ok {
-            content_type: Default::default(),
-            content_length: 0,
-            body: String::new(),
-        }
-    }
 }
 
 impl Response {
@@ -124,5 +114,22 @@ impl Response {
             ),
             Response::NotFound => format!("{NOT_FOUND_RESP}\r\n"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parsing_param() {
+        assert_eq!(
+            parse_echo_header("GET /echo/hello HTTP/1.1"),
+            Ok(("", "hello"))
+        );
+        assert_eq!(
+            parse_echo_header("GET /echo/217/delta HTTP/1.1"),
+            Ok(("", "217/delta"))
+        );
     }
 }
