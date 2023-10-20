@@ -7,7 +7,7 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                stream.write(b"HTTP/1.1 200 OK\r\n\r\n")?;
+                stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
             }
             Err(e) => {
                 println!("error: {}", e);
