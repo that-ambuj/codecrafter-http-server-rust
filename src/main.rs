@@ -46,10 +46,10 @@ async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
                     }
                 }
             },
-            "/" => Response::new_ok(),
             res if res.starts_with("/echo") => {
                 Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
             }
+            "/" => Response::new_ok(),
             _ => Response::new_not_found(),
         }
     } else {
@@ -132,12 +132,12 @@ impl Response {
                 content_length,
                 body,
             } => format!(
-                "{OK_RESP}Content-Type: {}\r\nContent-Length: {}\r\n\r\n{}",
+                "{OK_RESP}Content-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 content_type.to_string(),
                 content_length,
                 body
             ),
-            Response::NotFound => format!("{NOT_FOUND_RESP}\r\n"),
+            Response::NotFound => format!("{NOT_FOUND_RESP}\r\nConnection: close\r\n"),
         }
     }
 }
