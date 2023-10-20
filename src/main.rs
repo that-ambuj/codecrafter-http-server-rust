@@ -26,41 +26,34 @@ const NOT_FOUND_RESP: &str = "HTTP/1.1 404 NOT FOUND\r\n";
 fn handle_stream(mut stream: TcpStream) -> std::io::Result<()> {
     let reader = BufReader::new(&mut stream);
 
-    let mut lines = reader.lines();
-
-    let response = if let Some(first_line) = lines.next() {
-        match first_line.as_deref() {
-            Ok("GET / HTTP/1.1") => Response::new_ok(),
-            Ok(other) => parse_request(other),
-            _ => Response::new_not_found(),
-        }
-    } else {
-        Response::new_not_found()
-    };
+    let response = parse_request(reader);
 
     response.write_tcp(&mut stream)?;
 
     Ok(())
 }
 
-fn parse_request(input: &str) -> Response {
-    let mut lines = input.lines().filter(|l| !l.is_empty());
+fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
+    let mut lines = input
+        .lines()
+        .filter_map(Result::ok)
+        .filter(|l| !l.is_empty());
 
     let path_header = lines.next().unwrap();
 
-    if let Ok((_, path)) = parse_path(path_header) {
+    if let Ok((_, path)) = parse_path(&path_header) {
         match path {
-            "/user-agent" => {
-                if let Some(agent) = lines
-                    .filter_map(|l| parse_header_value(l).ok())
-                    .find(|(_, (h, _))| h == &"User-Agent")
-                    .map(|(_, (_, v))| v)
-                {
-                    Response::new_ok().set_body(agent)
-                } else {
-                    Response::new_not_found()
-                }
-            }
+            "/user-agent" => lines
+                .find_map(|line| {
+                    if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
+                        Some(v.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .map(|agent| Response::new_ok().set_body(&agent))
+                .unwrap_or(Response::new_not_found()),
+            "/" => Response::new_ok(),
             res if res.starts_with("/echo") => {
                 Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
             }
