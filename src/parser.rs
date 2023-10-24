@@ -1,13 +1,20 @@
+use anyhow::Result;
+use std::path::PathBuf;
+
 use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{char, multispace0, multispace1};
 use nom::sequence::{delimited, pair, preceded, separated_pair};
 use nom::IResult;
+use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::response::Response;
+use crate::response::{ContentType, Response};
 
-pub async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
+pub async fn parse_request(
+    input: BufReader<&mut TcpStream>,
+    file_dir: PathBuf,
+) -> Result<Response> {
     let mut lines = input.lines();
 
     if let Ok(Some(path_header)) = lines.next_line().await {
@@ -16,25 +23,39 @@ pub async fn parse_request(input: BufReader<&mut TcpStream>) -> Response {
                 "/user-agent" => loop {
                     if let Ok(Some(line)) = lines.next_line().await {
                         if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
-                            return Response::new_ok().set_body(v);
+                            return Ok(Response::new_ok().set_body(v.as_bytes()));
                         }
                     }
                 },
-                res if res.starts_with("/echo") => {
-                    Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1)
+                res if res.starts_with("/files") => {
+                    let file_name = remove_files_prefix(res).unwrap().1;
+                    let file_path = file_dir.join(file_name);
+
+                    let contents = fs::read(file_path).await?;
+
+                    Ok(Response::new_ok()
+                        .set_content_type(ContentType::Binary)
+                        .set_body(&contents))
                 }
-                "/" => Response::new_ok(),
-                _ => Response::new_not_found(),
+                res if res.starts_with("/echo") => {
+                    Ok(Response::new_ok().set_body(remove_echo_prefix(res).unwrap().1.as_bytes()))
+                }
+                "/" => Ok(Response::new_ok()),
+                _ => Ok(Response::new_not_found()),
             },
-            _ => Response::new_not_found(),
+            _ => Ok(Response::new_not_found()),
         }
     } else {
-        Response::new_not_found()
+        Ok(Response::new_not_found())
     }
 }
 
 fn remove_echo_prefix(input: &str) -> IResult<&str, &str> {
     preceded(tag("/echo/"), is_not(" "))(input)
+}
+
+fn remove_files_prefix(input: &str) -> IResult<&str, &str> {
+    preceded(tag("/files/"), is_not(" "))(input)
 }
 
 fn parse_path(input: &str) -> IResult<&str, &str> {
