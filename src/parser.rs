@@ -1,12 +1,10 @@
 use anyhow::Result;
-use nom::branch::alt;
-use nom::combinator::rest;
 use nom::multi::many1;
 use std::path::PathBuf;
 
 use nom::bytes::complete::{is_not, tag};
-use nom::character::complete::{char, multispace0, multispace1};
-use nom::sequence::{delimited, pair, preceded, separated_pair};
+use nom::character::complete::{char, line_ending, multispace0, multispace1, not_line_ending};
+use nom::sequence::{delimited, pair, preceded, separated_pair, terminated};
 use nom::IResult;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -54,19 +52,17 @@ pub async fn parse_request(
             // for POST requests
             (_, Ok((_, path))) => match path {
                 res if res.starts_with("/files") => {
-                    let mut lines = res.lines();
-
-                    let file_name = remove_files_prefix(lines.next().unwrap()).unwrap().1;
+                    let file_name = remove_files_prefix(res).unwrap().1;
                     let file_path = file_dir.join(file_name);
 
                     let contents = parse_post_body(res).unwrap().1;
 
                     fs::write(file_path, contents).await.unwrap();
 
-                    Ok(Response::new_ok()
+                    return Ok(Response::new_ok()
                         .set_code(Code::Created)
                         .set_content_type(ContentType::Binary)
-                        .set_body(contents.as_bytes()))
+                        .set_body(contents.as_bytes()));
                 }
                 _ => Ok(Response::new_not_found()),
             },
@@ -102,17 +98,19 @@ fn parse_path_post(input: &str) -> IResult<&str, &str> {
 }
 
 fn parse_post_body(input: &str) -> IResult<&str, &str> {
-    preceded(
-        pair(
-            alt((parse_path_post, parse_path_get)),
-            many1(parse_header_value),
-        ),
-        rest,
+    separated_pair(
+        pair(parse_path_post, many1(parse_header_value)),
+        line_ending,
+        not_line_ending,
     )(input)
+    .map(|(rest, (_, last))| (rest, last))
 }
 
 fn parse_header_value(input: &str) -> IResult<&str, (&str, &str)> {
-    separated_pair(is_not(":"), pair(char(':'), multispace0), is_not(" "))(input)
+    terminated(
+        separated_pair(is_not(":"), pair(char(':'), multispace0), not_line_ending),
+        line_ending,
+    )(input)
 }
 
 #[cfg(test)]
@@ -128,15 +126,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_path_post() {
+        assert_eq!(
+            parse_path_post("POST /hello/world HTTP/1.1"),
+            Ok(("", "/hello/world"))
+        );
+    }
+
+    #[test]
     fn test_parse_header_value() {
         assert_eq!(
-            parse_header_value("Content-Type: text/plain"),
+            parse_header_value("Content-Type: text/plain\r\n"),
             Ok(("", ("Content-Type", "text/plain")))
         );
 
         assert_eq!(
-            parse_header_value("User-Agent: curl/7.64.1"),
+            parse_header_value("User-Agent: curl/7.64.1\r\n"),
             Ok(("", ("User-Agent", "curl/7.64.1")))
+        )
+    }
+
+    #[test]
+    fn test_parse_post_body() {
+        assert_eq!(
+            parse_post_body(
+                "POST /files/skibiddy HTTP/1.1\r\nContent-Length: 103\r\n\r\nHumpty Dumpty\r\n",
+            ),
+            Ok(("\r\n", "Humpty Dumpty"))
         )
     }
 }
