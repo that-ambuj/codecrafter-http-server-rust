@@ -1,6 +1,3 @@
-const OK_RESP: &str = "HTTP/1.1 200 OK\r\n";
-const NOT_FOUND_RESP: &str = "HTTP/1.1 404 NOT FOUND\r\n";
-
 #[derive(Default, Debug)]
 pub enum ContentType {
     #[default]
@@ -17,69 +14,69 @@ impl ToString for ContentType {
     }
 }
 
-pub enum Response {
-    Ok {
-        content_type: ContentType,
-        content_length: usize,
-        body: Vec<u8>,
-    },
+#[derive(Default, Debug)]
+pub enum Code {
+    #[default]
+    Ok,
+    Created,
     NotFound,
+}
+
+impl ToString for Code {
+    fn to_string(&self) -> String {
+        match self {
+            Code::Ok => "200 OK",
+            Code::Created => "201 CREATED",
+            Code::NotFound => "404 NOT FOUND",
+        }
+        .into()
+    }
+}
+
+#[derive(Default)]
+pub struct Response {
+    code: Code,
+    content_type: ContentType,
+    body: Vec<u8>,
 }
 
 impl Response {
     pub fn new_ok() -> Self {
-        Response::Ok {
-            content_type: ContentType::TextPlain,
-            content_length: 0,
-            body: Vec::new(),
-        }
+        Default::default()
     }
 
     pub fn new_not_found() -> Self {
-        Response::NotFound
+        Response {
+            code: Code::NotFound,
+            ..Default::default()
+        }
+    }
+
+    pub fn set_code(self, code: Code) -> Self {
+        Response { code, ..self }
     }
 
     pub fn set_content_type(self, content_type: ContentType) -> Self {
-        match self {
-            Response::Ok {
-                content_length,
-                body,
-                // ignore existing content_type
-                ..
-            } => Response::Ok {
-                content_type,
-                content_length,
-                body,
-            },
-            Response::NotFound => Response::NotFound,
+        Response {
+            content_type,
+            ..self
         }
     }
 
     pub fn set_body(self, body: &[u8]) -> Self {
-        match self {
-            Response::Ok { content_type, .. } => Response::Ok {
-                content_type,
-                content_length: body.len(),
-                body: body.to_owned(),
-            },
-            // noop when setting body for not found type
-            Response::NotFound => Response::NotFound,
+        Response {
+            body: body.to_owned(),
+            ..self
         }
     }
 
     pub fn build(&self) -> String {
-        match self {
-            Response::Ok {
-                content_type,
-                content_length,
-                body,
-            } => format!(
-                "{OK_RESP}Content-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                content_type.to_string(),
-                content_length,
-                String::from_utf8_lossy(body),
-            ),
-            Response::NotFound => format!("{NOT_FOUND_RESP}\r\n"),
-        }
+        format!(
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            self.code.to_string(),
+            self.content_type.to_string(),
+            self.body.len(),
+            String::from_utf8_lossy(&self.body),
+        )
     }
 }

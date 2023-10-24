@@ -1,4 +1,7 @@
 use anyhow::Result;
+use nom::branch::alt;
+use nom::combinator::rest;
+use nom::multi::many1;
 use std::path::PathBuf;
 
 use nom::bytes::complete::{is_not, tag};
@@ -9,7 +12,7 @@ use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::response::{ContentType, Response};
+use crate::response::{Code, ContentType, Response};
 
 pub async fn parse_request(
     input: BufReader<&mut TcpStream>,
@@ -18,8 +21,9 @@ pub async fn parse_request(
     let mut lines = input.lines();
 
     if let Ok(Some(path_header)) = lines.next_line().await {
-        match parse_path(&path_header) {
-            Ok((_, path)) => match path {
+        match (parse_path_get(&path_header), parse_path_post(&path_header)) {
+            // For GET requests
+            (Ok((_, path)), _) => match path {
                 "/user-agent" => loop {
                     if let Ok(Some(line)) = lines.next_line().await {
                         if let Ok((_, ("User-Agent", v))) = parse_header_value(&line) {
@@ -47,6 +51,25 @@ pub async fn parse_request(
                 "/" => Ok(Response::new_ok()),
                 _ => Ok(Response::new_not_found()),
             },
+            // for POST requests
+            (_, Ok((_, path))) => match path {
+                res if res.starts_with("/files") => {
+                    let mut lines = res.lines();
+
+                    let file_name = remove_files_prefix(lines.next().unwrap()).unwrap().1;
+                    let file_path = file_dir.join(file_name);
+
+                    let contents = parse_post_body(res).unwrap().1;
+
+                    fs::write(file_path, contents).await.unwrap();
+
+                    Ok(Response::new_ok()
+                        .set_code(Code::Created)
+                        .set_content_type(ContentType::Binary)
+                        .set_body(contents.as_bytes()))
+                }
+                _ => Ok(Response::new_not_found()),
+            },
             _ => Ok(Response::new_not_found()),
         }
     } else {
@@ -62,11 +85,29 @@ fn remove_files_prefix(input: &str) -> IResult<&str, &str> {
     preceded(tag("/files/"), is_not(" "))(input)
 }
 
-fn parse_path(input: &str) -> IResult<&str, &str> {
+fn parse_path_get(input: &str) -> IResult<&str, &str> {
     delimited(
         pair(tag("GET"), multispace1),
         is_not(" "),
         pair(multispace1, tag("HTTP/1.1")),
+    )(input)
+}
+
+fn parse_path_post(input: &str) -> IResult<&str, &str> {
+    delimited(
+        pair(tag("POST"), multispace1),
+        is_not(" "),
+        pair(multispace1, tag("HTTP/1.1")),
+    )(input)
+}
+
+fn parse_post_body(input: &str) -> IResult<&str, &str> {
+    preceded(
+        pair(
+            alt((parse_path_post, parse_path_get)),
+            many1(parse_header_value),
+        ),
+        rest,
     )(input)
 }
 
@@ -81,7 +122,7 @@ mod tests {
     #[test]
     fn test_parse_path() {
         assert_eq!(
-            parse_path("GET /hello/world HTTP/1.1"),
+            parse_path_get("GET /hello/world HTTP/1.1"),
             Ok(("", "/hello/world"))
         );
     }
