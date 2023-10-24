@@ -31,6 +31,10 @@ pub async fn parse_request(
                     let file_name = remove_files_prefix(res).unwrap().1;
                     let file_path = file_dir.join(file_name);
 
+                    if let Ok(false) = file_path.try_exists() {
+                        return Ok(Response::new_not_found());
+                    }
+
                     let contents = fs::read(file_path).await?;
 
                     Ok(Response::new_ok()
