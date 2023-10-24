@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nom::combinator::opt;
 use nom::multi::many1;
 use std::path::PathBuf;
 
@@ -109,7 +110,7 @@ fn parse_post_body(input: &str) -> IResult<&str, &str> {
 fn parse_header_value(input: &str) -> IResult<&str, (&str, &str)> {
     terminated(
         separated_pair(is_not(":"), pair(char(':'), multispace0), not_line_ending),
-        line_ending,
+        opt(line_ending),
     )(input)
 }
 
