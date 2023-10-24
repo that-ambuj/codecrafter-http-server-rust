@@ -56,7 +56,13 @@ pub async fn parse_request(
                     let file_name = remove_files_prefix(res).unwrap().1;
                     let file_path = file_dir.join(file_name);
 
-                    let contents = parse_post_body(res).unwrap().1;
+                    let mut data = String::new();
+
+                    while let Ok(Some(l)) = lines.next_line().await {
+                        data.push_str(&l);
+                    }
+
+                    let contents = parse_post_body(&data).unwrap().1;
 
                     fs::write(file_path, contents).await.unwrap();
 
@@ -100,7 +106,7 @@ fn parse_path_post(input: &str) -> IResult<&str, &str> {
 
 fn parse_post_body(input: &str) -> IResult<&str, &str> {
     separated_pair(
-        pair(parse_path_post, many1(parse_header_value)),
+        pair(opt(parse_path_post), many1(parse_header_value)),
         line_ending,
         not_line_ending,
     )(input)
