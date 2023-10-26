@@ -42,6 +42,10 @@ pub fn process_request(stream: &mut TcpStream, file_dir: Arc<PathBuf>) -> Result
                 let file_name = path.trim_start_matches("/files/");
                 let file_path = file_dir.join(file_name);
 
+                if let Ok(false) = file_path.try_exists() {
+                    return Ok(Response::new_not_found());
+                }
+
                 let contents = fs::read(file_path)?;
 
                 return Ok(Response::new_ok()
