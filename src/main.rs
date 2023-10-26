@@ -17,7 +17,6 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     let Args { directory } = Args::parse();
-    let directory = directory;
 
     if let Ok(false) = directory.try_exists() {
         DirBuilder::new().create(directory.clone()).unwrap();
