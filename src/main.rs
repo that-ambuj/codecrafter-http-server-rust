@@ -1,29 +1,38 @@
+use std::fs::DirBuilder;
+use std::io::Write;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::thread;
 
-use tokio::fs::DirBuilder;
-
+use anyhow::Result;
 use clap::Parser;
-use tokio::io::{AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use request::process_request;
 
 mod parser;
+mod request;
 mod response;
 
-use crate::parser::parse_request;
-
-#[tokio::main]
-async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:4221").await.unwrap();
+fn main() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     let Args { directory } = Args::parse();
+    let directory = Arc::new(directory);
 
     if let Ok(false) = directory.try_exists() {
-        DirBuilder::new().create(directory.clone()).await.unwrap();
+        DirBuilder::new()
+            .create(Arc::into_inner(directory.clone()).unwrap())
+            .unwrap();
     }
 
-    while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(handle_stream(stream, directory.clone()));
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+        let dir = directory.clone();
+
+        thread::spawn(move || handle_stream(stream, dir));
     }
+
+    Ok(())
 }
 
 #[derive(Parser, Debug)]
@@ -33,9 +42,9 @@ struct Args {
     directory: PathBuf,
 }
 
-async fn handle_stream(mut stream: TcpStream, dir: PathBuf) {
-    let reader = BufReader::new(&mut stream);
+fn handle_stream(mut stream: TcpStream, dir: Arc<PathBuf>) {
+    stream.set_ttl(5).unwrap();
+    let response = process_request(&mut stream, dir).unwrap();
 
-    let response = parse_request(reader, dir).await.unwrap();
-    stream.write_all(response.build().as_bytes()).await.unwrap();
+    stream.write_all(response.build().as_bytes()).unwrap();
 }
