@@ -17,18 +17,17 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     let Args { directory } = Args::parse();
-    let directory = Arc::new(directory);
+    let directory = directory;
 
     if let Ok(false) = directory.try_exists() {
-        DirBuilder::new()
-            .create(Arc::into_inner(directory.clone()).unwrap())
-            .unwrap();
+        DirBuilder::new().create(directory.clone()).unwrap();
     }
 
+    let dir = Arc::new(directory);
     for stream in listener.incoming() {
         let stream = stream.unwrap();
-        let dir = directory.clone();
 
+        let dir = dir.clone();
         thread::spawn(move || handle_stream(stream, dir));
     }
 
